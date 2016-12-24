@@ -1,71 +1,83 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
+	"strings"
+	"time"
 )
 
 func main() {
-	fmt.Println("Trilobite Debugging proxy")
 
 	cmdLocalPort := flag.String("port", "8888", "Local port for incoming connections")
 	flag.Parse()
 
+	fmt.Printf("\n\nTrilobite Debugging Proxy - using port %s\n\n", *cmdLocalPort)
+
 	localPort := fmt.Sprintf(":%s", *cmdLocalPort)
-	// listen for connections forver
-	ln, err := net.Listen("tcp", localPort)
-	if err != nil {
-		log.Fatalf("Failed to list on: %s", err)
-	}
-	fmt.Printf("Listening on localhost port: %s \n", *cmdLocalPort)
-	// endless loop to accept connections
-	for {
-		conn, err := ln.Accept()
-		if err == nil {
-			go handleConnection(conn)
-		} else {
-			log.Fatalf("failed to accept connection %s", err)
-		}
-	}
+
+	http.HandleFunc("/", HandleConnections)
+	log.Fatal(http.ListenAndServe(localPort, nil))
 
 }
 
-func handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	reader := bufio.NewReader(conn)
-	for {
-		req, err := http.ReadRequest(reader)
-		if err != nil {
-			if err == io.EOF {
-				log.Printf("Failed to read request: %s", err)
-			}
-			return
+func detectTextContentType(url string, contentType *string) {
+	if strings.Contains(*contentType, "text/plain") {
+		if strings.Contains(url, "css") {
+			*contentType = "text/css"
 		}
-
-		log.Printf("request: %s %s %s %s", req.URL.Path, req.Host, req.Method, req.URL.String())
-
-		backendUrl := fmt.Sprintf("%s:%s", req.Host, "80")
-		log.Printf("backendurl %S", backendUrl)
-		// sending the request to backend
-		if be, err := net.Dial("tcp", backendUrl); err == nil {
-			be_reader := bufio.NewReader(be)
-			if err := req.Write(be); err == nil {
-				// read the response from the backend
-				if resp, err := http.ReadResponse(be_reader, req); err == nil {
-					resp.Close = true
-					if err := resp.Write(conn); err == nil {
-						log.Printf("%s: %d", req.URL.Path, resp.StatusCode)
-					}
-					conn.Close()
-				}
-			}
+		if strings.Contains(url, ".js") {
+			*contentType = "application/javascript"
 		}
-
 	}
+}
+
+func HandleConnections(w http.ResponseWriter, req *http.Request) {
+
+	log.Printf("Request: %s \n", req.URL.String())
+
+	// making a copy of request headers
+	headers := map[string][]string{}
+	headers = req.Header
+
+	// building the request again
+	newreq, err := http.NewRequest(req.Method, req.URL.String(), req.Body)
+	if err != nil {
+		log.Print(err)
+	}
+
+	var client = &http.Client{
+		Timeout: time.Second * 10,
+	}
+	resp, err := client.Do(newreq)
+	if err != nil {
+		log.Print(err)
+	}
+
+	content, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Print(err)
+	}
+
+	cotcopy := content
+
+	// get the "right" content type, and then get it again for css and js
+	contentType := http.DetectContentType(content)
+	detectTextContentType(req.URL.String(), &contentType)
+
+	//log.Printf("Response: %s \n", resp)
+	log.Printf("Copy size: %d, resp size:%d \n", len(cotcopy), len(content))
+
+	// adding headers to the request
+	w.Header().Set("Content-Type", contentType)
+	for k, v := range headers {
+		w.Header().Set(k, strings.Join(v, " "))
+	}
+
+	// writing back the Response
+	fmt.Fprintf(w, "%s", content)
+
 }
