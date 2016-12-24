@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+type RequestMsg struct {
+	url          string
+	ResponseBody string
+}
+
 func main() {
 
 	cmdLocalPort := flag.String("port", "8888", "Local port for incoming connections")
@@ -19,9 +24,16 @@ func main() {
 
 	localPort := fmt.Sprintf(":%s", *cmdLocalPort)
 
+	socket_listener()
+
+	//go func() {
 	http.HandleFunc("/", HandleConnections)
 	log.Fatal(http.ListenAndServe(localPort, nil))
+	//}()
 
+	// var input string
+	// fmt.Scanln(&input)
+	// fmt.Println("done")
 }
 
 func detectTextContentType(url string, contentType *string) {
@@ -63,6 +75,8 @@ func HandleConnections(w http.ResponseWriter, req *http.Request) {
 	}
 
 	cotcopy := content
+	msg := RequestMsg{req.URL.String(), fmt.Sprintf("%s", cotcopy)}
+	log.Printf("msg:%s \n", msg)
 
 	// get the "right" content type, and then get it again for css and js
 	contentType := http.DetectContentType(content)
