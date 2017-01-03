@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -14,6 +16,16 @@ type RequestMsg struct {
 	url          string
 	ResponseBody string
 }
+
+var RequestChan chan RequestMsg
+
+type Filters struct {
+	Requests []struct {
+		Pattern string `json:"pattern"`
+	} `json:"requests"`
+}
+
+var loadedFilters Filters
 
 func main() {
 
@@ -24,7 +36,11 @@ func main() {
 
 	localPort := fmt.Sprintf(":%s", *cmdLocalPort)
 
-	socket_listener()
+	loadedFilters = loadFilters()
+
+	RequestChan = make(chan RequestMsg)
+
+	go startManagerServer()
 
 	//go func() {
 	http.HandleFunc("/", HandleConnections)
@@ -47,9 +63,26 @@ func detectTextContentType(url string, contentType *string) {
 	}
 }
 
+func loadFilters() Filters {
+
+	content, err := ioutil.ReadFile("filters.json")
+	if err != nil {
+		log.Panic(err)
+	}
+
+	var filters Filters
+	if err := json.Unmarshal(content, &filters); err != nil {
+		log.Panic(err)
+	}
+
+	log.Printf("Loaded %s filters \n", len(filters.Requests))
+
+	return filters
+}
+
 func HandleConnections(w http.ResponseWriter, req *http.Request) {
 
-	log.Printf("Request: %s \n", req.URL.String())
+	//log.Printf("Request: %s \n", req.URL.String())
 
 	// making a copy of request headers
 	headers := map[string][]string{}
@@ -74,16 +107,22 @@ func HandleConnections(w http.ResponseWriter, req *http.Request) {
 		log.Print(err)
 	}
 
-	cotcopy := content
-	msg := RequestMsg{req.URL.String(), fmt.Sprintf("%s", cotcopy)}
-	log.Printf("msg:%s \n", msg)
+	//cotcopy := content
+	for _, filter := range loadedFilters.Requests {
+		match, _ := regexp.MatchString(filter.Pattern, req.URL.String())
+		if match {
+			msg := RequestMsg{req.URL.String(), fmt.Sprintf("%s", content)}
+			log.Printf("msg:%s \n", msg.url)
+			RequestChan <- msg
+		}
+	}
 
 	// get the "right" content type, and then get it again for css and js
 	contentType := http.DetectContentType(content)
 	detectTextContentType(req.URL.String(), &contentType)
 
 	//log.Printf("Response: %s \n", resp)
-	log.Printf("Copy size: %d, resp size:%d \n", len(cotcopy), len(content))
+	//log.Printf("Copy size: %d, resp size:%d \n", len(cotcopy), len(content))
 
 	// adding headers to the request
 	w.Header().Set("Content-Type", contentType)

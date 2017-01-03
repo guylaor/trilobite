@@ -1,0 +1,5 @@
+{
+    "requests" : [
+      { "pattern" : ".*ad.doubleclick.net.*" }
+    ]
+}
